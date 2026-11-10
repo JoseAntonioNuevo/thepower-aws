@@ -1,0 +1,5 @@
+# Solo enviamos a Docker lo necesario; claves y archivos locales quedan fuera.
+*
+!app.py
+!requirements.lock
+!Dockerfile

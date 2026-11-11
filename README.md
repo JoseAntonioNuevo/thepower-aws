@@ -1,5 +1,7 @@
 # S16 · Una API de IA en Docker y AWS
 
+Para el directo de José en el proyecto `thepower-aws` y región `eu-north-1`, usa el [guion preparado de clase](CLASE-AWS.md). Incluye la infraestructura de apoyo, los comandos del directo, costes y retirada; los ejemplos de cuenta y región de este README son genéricos.
+
 Vamos a llevar una pequeña API de soporte desde nuestro ordenador a AWS. El objetivo es entender **imagen → registro → contenedor → respuesta**, sin tener que estudiar un proyecto grande. La práctica posterior es opcional.
 
 ## Qué hace
@@ -45,7 +47,7 @@ En `.env.example` encontrarás un ejemplo para el modo real. Si dejas `OPENROUTE
 
 ### Antes de empezar
 
-Necesitas el contenido de esta carpeta en tu ordenador y Docker Desktop instalado y abierto. Los comandos están escritos para una terminal Bash o Zsh; en Windows puedes usar una terminal Bash. No necesitas instalar Python en tu equipo: la imagen ya lo incluye.
+Necesitas el contenido de esta carpeta y Docker funcionando. En macOS y Windows abre Docker Desktop; en Windows selecciona contenedores Linux y utiliza Git Bash para ejecutar los comandos de esta guía. En Linux usa Docker Engine iniciado y una terminal Bash, con un usuario autorizado a ejecutar Docker; Docker Desktop también sirve. En macOS usa Terminal con Zsh o Bash. No necesitas instalar Python en tu equipo: la imagen ya lo incluye.
 
 Clona este repositorio y entra en su carpeta desde una terminal:
 
@@ -79,21 +81,22 @@ El archivo `.dockerignore` deja fuera `.env` y solo permite los archivos necesar
 ### Paso 1: construir la imagen
 
 ```bash
-docker build --platform linux/amd64 -t s16-clasificador:1 .
+docker build -t s16-clasificador:local .
 ```
 
-`docker build` lee el Dockerfile; `-t s16-clasificador:1` da nombre y versión a la imagen; el punto final indica que la carpeta actual es el contexto de construcción. La primera ejecución puede tardar mientras descarga la imagen base y las dependencias. Comprueba que la imagen aparece:
+`docker build` lee el Dockerfile; `-t s16-clasificador:local` da nombre a la imagen; el punto final indica que la carpeta actual es el contexto de construcción. Sin `--platform`, Docker usa normalmente la arquitectura nativa del motor. La primera ejecución puede tardar mientras descarga la imagen base y las dependencias. Comprueba la imagen y su arquitectura:
 
 ```bash
 docker image ls s16-clasificador
+docker image inspect s16-clasificador:local --format '{{.Os}}/{{.Architecture}}'
 ```
 
-Usamos `linux/amd64` para que coincida con la tarea X86_64 prevista en Fargate. En un Mac con Apple Silicon se necesita emulación para ejecutar esa imagen; también puedes usar ARM64 si construyes la imagen y configuras la tarea con la misma arquitectura.
+El resultado suele ser `linux/arm64` en Mac con Apple Silicon y `linux/amd64` en equipos AMD64 con macOS, Linux o Windows. Un equipo Windows o Linux con procesador ARM puede mostrar `linux/arm64`. Depende de la arquitectura del motor Docker. La imagen usa Linux incluso en macOS y Windows.
 
 ### Paso 2: arrancar el contenedor simulado
 
 ```bash
-docker run --rm -d --name s16-demo -p 127.0.0.1:8000:8000 s16-clasificador:1
+docker run --rm -d --name s16-demo -p 127.0.0.1:8000:8000 s16-clasificador:local
 docker ps
 ```
 
@@ -130,7 +133,7 @@ Crea `.env` a partir del ejemplo **solo si todavía no existe**; si ya lo tienes
 [ -e .env ] || cp .env.example .env
 chmod 600 .env
 # Edita .env con tu editor y guarda tu clave de OpenRouter.
-docker run --rm -d --name s16-demo --env-file .env -p 127.0.0.1:8000:8000 s16-clasificador:1
+docker run --rm -d --name s16-demo --env-file .env -p 127.0.0.1:8000:8000 s16-clasificador:local
 curl -X POST http://127.0.0.1:8000/clasificar -H 'Content-Type: application/json' -d '{"texto":"No puedo entrar en mi cuenta"}'
 docker logs s16-demo
 docker stop s16-demo
@@ -143,6 +146,15 @@ Si cambias `.env`, detén y vuelve a crear el contenedor para que lea los nuevos
 ## 3. Publicar la imagen en ECR
 
 Necesitas un proyecto AWS de laboratorio autorizado, AWS CLI con sesión ya configurada, permisos, región y presupuesto. Crear recursos genera costes. Comprueba proyecto y región antes de empezar; no envíes datos personales. El ejemplo usa Estocolmo (`eu-north-1`) y un repositorio nuevo propio llamado `s16-clasificador`. Si tu proyecto usa otra región, configura la región que tengas asignada.
+
+La tarea Fargate de este ejemplo utiliza X86_64. Construye una segunda imagen compatible para AWS, sin reemplazar la imagen nativa local:
+
+```bash
+docker build --platform linux/amd64 -t s16-clasificador:1 .
+docker image inspect s16-clasificador:1 --format '{{.Os}}/{{.Architecture}}'
+```
+
+Debe mostrar `linux/amd64`. En un equipo ARM la construcción puede usar emulación y tardar más. Si eliges ARM64 en Fargate, construye para ARM64 y configura la tarea para esa arquitectura; ambas deben coincidir.
 
 ```bash
 aws sts get-caller-identity

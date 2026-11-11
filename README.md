@@ -4,6 +4,13 @@ Para el directo de José en el proyecto `thepower-aws` y región `eu-north-1`, u
 
 Vamos a llevar una pequeña API de soporte desde nuestro ordenador a AWS. El objetivo es entender **imagen → registro → contenedor → respuesta**, sin tener que estudiar un proyecto grande. La práctica posterior es opcional.
 
+## Guías de la clase
+
+- [Guion paso a paso con comandos](docs/guion-clase.md).
+- [Prompt para ejecutar la demo con un agente](docs/prompt-agente.md).
+
+Las guías usan tu propio perfil, proyecto y recursos AWS. Prepara los requisitos indicados antes de ejecutar los bloques; el prompt requiere un agente con acceso a tu equipo y a AWS.
+
 ## Qué hace
 
 `GET /health` comprueba que la API funciona. `POST /clasificar` recibe `{"texto":"No puedo entrar en mi cuenta"}` y devuelve categoría, prioridad y respuesta. `/docs` permite probarla desde el navegador.

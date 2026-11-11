@@ -142,14 +142,14 @@ Si cambias `.env`, detén y vuelve a crear el contenedor para que lea los nuevos
 
 ## 3. Publicar la imagen en ECR
 
-Necesitas una cuenta AWS de laboratorio autorizada, AWS CLI con sesión ya configurada, permisos, región y presupuesto. Crear recursos genera costes. Comprueba cuenta y región antes de empezar; no envíes datos personales. El ejemplo usa Irlanda y un repositorio nuevo propio llamado `s16-clasificador`.
+Necesitas un proyecto AWS de laboratorio autorizado, AWS CLI con sesión ya configurada, permisos, región y presupuesto. Crear recursos genera costes. Comprueba proyecto y región antes de empezar; no envíes datos personales. El ejemplo usa Estocolmo (`eu-north-1`) y un repositorio nuevo propio llamado `s16-clasificador`. Si tu proyecto usa otra región, configura la región que tengas asignada.
 
 ```bash
 aws sts get-caller-identity
 aws configure get region
 # Sustituye por TU cuenta y región tras comprobarlas arriba.
 AWS_ACCOUNT=123456789012
-AWS_REGION=eu-west-1
+AWS_REGION=eu-north-1
 REPO_URI="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/s16-clasificador"
 aws ecr create-repository --repository-name s16-clasificador --region "$AWS_REGION"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"

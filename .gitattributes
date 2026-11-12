@@ -1,0 +1,5 @@
+# Los scripts deben conservar saltos de línea compatibles con Bash en Windows.
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf

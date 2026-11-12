@@ -1,107 +1,106 @@
-# Guion de la demo · Docker, AWS y OpenRouter
+# Guion de clase · Subir la API a AWS paso a paso
 
-Ejecuta los bloques desde la raíz del repositorio, en Bash/Zsh o Git Bash en Windows; detente si falla uno. Docker y AWS CLI deben estar instalados, y `.env` configurado según el [README](../README.md).
+Actualizado el **12/11/2026** a partir del ensayo del profesor. Recorrido: **imagen Docker → ECR → configuración → ECS/Fargate → prueba real → limpieza**.
 
-Para la parte AWS, prepara primero un cluster Fargate, un rol de ejecución con acceso a ECR/logs y a tu secreto, un grupo de logs y un grupo de seguridad **propio y sin entradas**, siguiendo los pasos 4 y 5 del README. Usa subredes públicas con ruta a Internet. Los valores de abajo son tuyos: no uses los del profesor. Esta demo genera consumo temporal e inferencia; HTTP restringido es solo para datos ficticios.
+**Primera vez:** completa [Preparar AWS](preparar-aws.md). Ahí están todos los comandos para crear la red, permisos, secreto, registros y cluster que el profesor ya tenía preparados. Esta guía comienza con esa preparación terminada, sin servicio ni repositorio ECR.
 
-Configurar el perfil, región e identificadores propios de la infraestructura preparada.
+Ejecuta desde la raíz del repositorio, en **Bash** (Mac/Linux) o **Git Bash** (Windows), en la misma terminal y en orden. Si falla un bloque, detente. No muestres `.env` ni la clave. En Windows sigue los requisitos de Python y Docker de la preparación. Una nueva terminal necesita volver a cargar el bloque 0.
+
+## 0 · Recuperar tu configuración
+
+**Carga los nombres guardados de tu proyecto y comprueba la identidad.**
 
 ```bash
-export AWS_PROFILE=tu-perfil
-export AWS_REGION=eu-north-1
-export AWS_PAGER=''
-S16_CLUSTER=tu-cluster
-S16_EXECUTION_ROLE_ARN=arn-de-tu-rol-de-ejecucion
-S16_SECRET_ARN=arn-de-tu-secreto-openrouter
-S16_LOG_GROUP=/s16/tu-nombre
-S16_SUBNET=subnet-de-tu-red-publica
-S16_SECURITY_GROUP=sg-de-tu-grupo-propio
-S16_REPOSITORY=s16-clasificador
-S16_SERVICE=s16-clasificador
-aws_demo() { command aws --profile "$AWS_PROFILE" --region "$AWS_REGION" "$@"; }
-aws_demo sts get-caller-identity
+source scripts/contexto.sh
+set -o pipefail
+s16_comprobar_identidad
 ```
 
-Verifica que la identidad sea la de tu proyecto y que la región sea la asignada a él; Estocolmo es solo el ejemplo de la clase.
+Los nombres con `$` son datos que guardamos para usarlos después. Los archivos `.demo-aws/` contienen tus identificadores y quedan fuera de Git. En clase José usó `aws/contexto.sh`; en este repo público usamos `scripts/contexto.sh`, que carga **tus** datos. No necesitas ningún archivo privado del profesor.
 
-Construir la imagen nativa para tu equipo y la imagen AMD64 para Fargate X86_64.
+Si caducó tu sesión, vuelve a entrar con el método que usaste en la preparación y repite este bloque.
+
+## 1 · Construir las imágenes antes del directo
+
+**Crea una imagen nativa para tu ordenador y otra compatible con el AWS de la demo.**
 
 ```bash
 docker build -t s16-clasificador:local .
 docker build --platform linux/amd64 -t s16-clasificador:1 .
+docker image inspect s16-clasificador:1 --format '{{.Os}}/{{.Architecture}}'
 ```
 
-Arrancar la API local con sus variables, sin incorporar la clave a la imagen.
+La última debe mostrar `linux/amd64`, porque configuraremos Fargate como X86_64. La imagen local puede ser ARM64 en tu Mac; es correcto. Construye ambas de nuevo si cambias el código.
+
+**Prueba en local el modo real siguiendo el [paso 2 del README](../README.md#2-probar-openrouter-en-local).** Debe responder con `modo: real`; detén el contenedor local al terminar. En clase estas imágenes ya estaban construidas y probadas.
+
+## 2 · Mostrar de dónde partimos
+
+**Muestra que todavía no hay aplicación funcionando ni acceso abierto.**
 
 ```bash
-docker run --rm -d --name s16-demo --env-file .env -p 127.0.0.1:8000:8000 s16-clasificador:local
+aws_demo ecs describe-clusters --clusters "$S16_CLUSTER" \
+  --query 'clusters[].{tareas:runningTasksCount,pendientes:pendingTasksCount,servicios:activeServicesCount}'
+aws_demo ec2 describe-security-groups --group-ids "$S16_SECURITY_GROUP" \
+  --query 'SecurityGroups[0].IpPermissions'
 ```
 
-Comprobar salud y clasificación real, después de unos segundos de arranque.
+Esperado: ceros y `[]`. En la web: región de tu proyecto → ECS, ECR, IAM, Secrets Manager (sin enseñar el valor) y Security groups.
+
+`app.py` recibe un mensaje como «no puedo entrar en mi cuenta» y usa IA para devolver el tipo de problema, su prioridad y una respuesta sugerida. `Dockerfile` prepara el paquete; `.dockerignore` deja fuera la clave.
+
+## 3 · Subir la imagen
+
+**Crea en AWS el lugar donde guardaremos la imagen Docker.** La etiqueta `1` no podrá sobrescribirse.
 
 ```bash
-curl --fail-with-body http://127.0.0.1:8000/health
-curl --fail-with-body --max-time 40 http://127.0.0.1:8000/clasificar \
-  -H 'Content-Type: application/json' -d '{"texto":"No puedo entrar en mi cuenta ficticia"}'
-docker stop s16-demo
+aws_demo ecr create-repository --repository-name "$S16_REPOSITORY" \
+  --image-tag-mutability IMMUTABLE \
+  --encryption-configuration encryptionType=AES256 \
+  --tags Key=Project,Value=thepower-s16 Key=Purpose,Value=classroom-demo
 ```
 
-Crear un repositorio ECR exclusivo de esta práctica y guardar la URI devuelta por AWS.
+Si dice que ya existe, detente: comprueba si queda un ensayo por limpiar. No borres un repositorio ajeno ni intentes sobrescribir la etiqueta.
+
+**Da permiso a Docker para subir imágenes a tu almacén de AWS.**
 
 ```bash
-REPO_URI="$(aws_demo ecr create-repository --repository-name "$S16_REPOSITORY" \
-  --image-tag-mutability IMMUTABLE --tags Key=Project,Value=thepower-s16 \
-  --query 'repository.repositoryUri' --output text)"
-S16_REGISTRY="${REPO_URI%%/*}"
-S16_IMAGE="$REPO_URI:1"
+aws_demo ecr get-login-password \
+  | docker login --username AWS --password-stdin "$S16_REGISTRY"
 ```
 
-Autenticar Docker y subir la imagen preparada para AWS.
+**Pon a la imagen la dirección de destino que tendrá en AWS.**
 
 ```bash
-set -o pipefail
-aws_demo ecr get-login-password | docker login --username AWS --password-stdin "$S16_REGISTRY"
 docker tag s16-clasificador:1 "$S16_IMAGE"
+```
+
+**Sube la imagen desde tu ordenador a AWS.**
+
+```bash
 docker push "$S16_IMAGE"
 ```
 
-Generar una definición local con tus referencias de imagen, secreto, permisos y logs.
+**Comprueba que AWS tiene la etiqueta y la huella de esa imagen.**
 
 ```bash
-mkdir -p .demo-aws
-cat > .demo-aws/task-definition.json <<JSON
-{
-  "family": "$S16_SERVICE",
-  "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
-  "cpu": "256",
-  "memory": "512",
-  "executionRoleArn": "$S16_EXECUTION_ROLE_ARN",
-  "runtimePlatform": {"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"},
-  "containerDefinitions": [{
-    "name": "api",
-    "image": "$S16_IMAGE",
-    "essential": true,
-    "portMappings": [{"containerPort": 8000, "protocol": "tcp"}],
-    "environment": [
-      {"name": "API_MODE", "value": "real"},
-      {"name": "OPENROUTER_MODEL", "value": "openai/gpt-6-luna"},
-      {"name": "OPENROUTER_PROVIDER", "value": "openai/fast"}
-    ],
-    "secrets": [{"name": "OPENROUTER_API_KEY", "valueFrom": "$S16_SECRET_ARN"}],
-    "logConfiguration": {"logDriver": "awslogs", "options": {
-      "awslogs-group": "$S16_LOG_GROUP", "awslogs-region": "$AWS_REGION", "awslogs-stream-prefix": "api"
-    }},
-    "healthCheck": {
-      "command": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"],
-      "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 20
-    }
-  }]
-}
-JSON
+aws_demo ecr describe-images --repository-name "$S16_REPOSITORY" \
+  --image-ids imageTag=1 --query 'imageDetails[].{etiqueta:imageTags,huella:imageDigest}'
 ```
 
-Registrar la configuración y guardar el ARN de la revisión creada.
+En la web: ECR → tu repositorio → Images → etiqueta `1`.
+
+## 4 · Guardar cómo se ejecutará
+
+**Genera la configuración con tu imagen, red, recursos y referencia a la clave.**
+
+```bash
+python3 scripts/preparar-json.py
+```
+
+Puedes abrir `.demo-aws/task-definition.json`: no contiene la clave, solo dónde encontrarla. Son los mismos parámetros del ensayo: Linux X86_64, 0,25 vCPU, 512 MiB, puerto 8000, OpenRouter real, Luna y proveedor rápido. Usamos una subred propia; el profesor tenía tres subredes preparadas, pero una basta para esta demo.
+
+**Guarda la configuración en AWS y conserva su identificador.**
 
 ```bash
 S16_TASK_DEF_ARN="$(aws_demo ecs register-task-definition \
@@ -110,71 +109,153 @@ S16_TASK_DEF_ARN="$(aws_demo ecs register-task-definition \
 printf '%s\n' "$S16_TASK_DEF_ARN"
 ```
 
-Permitir acceso al puerto de la demo solo desde tu IPv4 pública actual.
+**Abre el puerto 8000 solo para tu conexión actual y poder probar la API.**
 
 ```bash
-S16_IP="$(curl -4fsS https://checkip.amazonaws.com)"
-S16_RULE_ID="$(aws_demo ec2 authorize-security-group-ingress \
-  --group-id "$S16_SECURITY_GROUP" --protocol tcp --port 8000 --cidr "$S16_IP/32" \
-  --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)"
+bash scripts/actualizar-ip.sh --execute
 ```
 
-Crear un servicio con una tarea y esperar al arranque en Fargate.
+Si cambias de red o VPN después, repite este último comando: sustituye la IP anterior, sin acumular accesos.
+
+## 5 · Arrancar la aplicación
+
+**Busca la configuración del paso anterior para que no falle por haber perdido la variable en la terminal.**
 
 ```bash
-aws_demo ecs create-service --cluster "$S16_CLUSTER" --service-name "$S16_SERVICE" \
-  --task-definition "$S16_TASK_DEF_ARN" --desired-count 1 --launch-type FARGATE \
-  --platform-version 1.4.0 \
-  --network-configuration "awsvpcConfiguration={subnets=[$S16_SUBNET],securityGroups=[$S16_SECURITY_GROUP],assignPublicIp=ENABLED}" \
-  --deployment-configuration 'minimumHealthyPercent=0,maximumPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}'
+S16_TASK_DEF_ARN="$(aws_demo ecs describe-task-definition \
+  --task-definition "$S16_SERVICE" \
+  --query 'taskDefinition.taskDefinitionArn' --output text)"
+printf '%s\n' "$S16_TASK_DEF_ARN"
+```
+
+Debe imprimir un identificador que empieza por `arn:aws:ecs:`; si aparece vacío o `None`, detente y revisa el paso 4.
+
+**Arranca una copia con la imagen, recursos, clave y red preparados.**
+
+```bash
+aws_demo ecs create-service \
+  --cluster "$S16_CLUSTER" --service-name "$S16_SERVICE" \
+  --task-definition "${S16_TASK_DEF_ARN:?Falta recuperar la definicion de tarea}" --desired-count 1 \
+  --launch-type FARGATE --platform-version 1.4.0 \
+  --network-configuration file://.demo-aws/network.json \
+  --deployment-configuration 'minimumHealthyPercent=0,maximumPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}' \
+  --tags key=Project,value=thepower-s16 key=Purpose,value=classroom-demo \
+  --query 'service.{nombre:serviceName,deseadas:desiredCount,estado:status}'
+```
+
+`1` pide una copia; Fargate aporta CPU y memoria sin preparar un servidor. El servicio vuelve a arrancarla si se para. Si el despliegue falla, AWS detiene el intento; puede volver al anterior si había uno correcto.
+
+**Espera a que AWS termine de arrancarla; puede tardar varios minutos.**
+
+```bash
 aws_demo ecs wait services-stable --cluster "$S16_CLUSTER" --services "$S16_SERVICE"
 ```
 
-Obtener la IP temporal de la tarea.
+**Confirma que hay una copia funcionando.**
 
 ```bash
-S16_TASK_ARN="$(aws_demo ecs list-tasks --cluster "$S16_CLUSTER" --service-name "$S16_SERVICE" \
-  --desired-status RUNNING --query 'taskArns[0]' --output text)"
-S16_ENI="$(aws_demo ecs describe-tasks --cluster "$S16_CLUSTER" --tasks "$S16_TASK_ARN" \
-  --query 'tasks[0].attachments[].details[?name==`networkInterfaceId`].value[] | [0]' --output text)"
-S16_PUBLIC_IP="$(aws_demo ec2 describe-network-interfaces --network-interface-ids "$S16_ENI" \
-  --query 'NetworkInterfaces[0].Association.PublicIp' --output text)"
+aws_demo ecs describe-services --cluster "$S16_CLUSTER" --services "$S16_SERVICE" \
+  --query 'services[].{deseadas:desiredCount,ejecutandose:runningCount,pendientes:pendingCount,eventos:events[:3].message}'
 ```
 
-Probar la API desde AWS y consultar los logs de CloudWatch.
+Esperado: `1`, `1`, `0`. Si falla la espera, revisa esos eventos y los registros del paso 6; no crees servicios duplicados. En la web: ECS → tu cluster → Tasks.
+
+## 6 · Probar el resultado
+
+**Busca la dirección nueva de la aplicación y muestra el enlace para abrirla.**
 
 ```bash
-curl --fail-with-body --connect-timeout 5 --max-time 10 "http://$S16_PUBLIC_IP:8000/health"
-curl --fail-with-body --connect-timeout 5 --max-time 40 "http://$S16_PUBLIC_IP:8000/clasificar" \
-  -H 'Content-Type: application/json' -d '{"texto":"No puedo entrar en mi cuenta ficticia"}'
+S16_PUBLIC_IP="$(bash scripts/ip-publica.sh)"
+printf 'http://%s:8000/docs\n' "${S16_PUBLIC_IP:?No se pudo obtener la direccion}"
+```
+
+**Comprueba que responde; debe devolver `ok` y `real`.**
+
+```bash
+curl --fail-with-body --connect-timeout 5 --max-time 10 \
+  "http://${S16_PUBLIC_IP:?Falta la direccion}:8000/health"
+```
+
+**Envía el mensaje a la IA y muestra el tipo de problema, su prioridad y una respuesta sugerida.**
+
+```bash
+curl --fail-with-body --connect-timeout 5 --max-time 40 \
+  "http://${S16_PUBLIC_IP:?Falta la direccion}:8000/clasificar" \
+  -H 'Content-Type: application/json' \
+  -d '{"texto":"No puedo entrar en mi cuenta ficticia"}'
+```
+
+La respuesta debe indicar `modo: real` y `modelo: openai/gpt-6-luna`; normalmente la categoría será `acceso`. El texto puede variar. `/health` no llama al modelo; `/clasificar` sí genera consumo. Un `502` o `503` no es una clasificación correcta.
+
+**Muestra los mensajes de arranque guardados en AWS.**
+
+```bash
 aws_demo logs tail "$S16_LOG_GROUP" --since 30m
 ```
 
-Al terminar, detener las tareas y eliminar el servicio y la revisión creados en esta práctica.
+Opcional: abre `/docs` en el navegador para mostrar el resultado visualmente. Esta prueba usa HTTP temporal restringido a tu IP, solo con datos ficticios; no es el acceso de una API de producción.
+
+## 7 · Terminar y limpiar lo desplegado
+
+**Comprueba de nuevo el proyecto antes de borrar los recursos de esta demo.**
 
 ```bash
-aws_demo sts get-caller-identity
-aws_demo ecs update-service --cluster "$S16_CLUSTER" --service "$S16_SERVICE" --desired-count 0
-aws_demo ecs wait services-stable --cluster "$S16_CLUSTER" --services "$S16_SERVICE"
-aws_demo ecs delete-service --cluster "$S16_CLUSTER" --service "$S16_SERVICE"
-aws_demo ecs wait services-inactive --cluster "$S16_CLUSTER" --services "$S16_SERVICE"
-aws_demo ecs deregister-task-definition --task-definition "$S16_TASK_DEF_ARN"
+s16_comprobar_identidad
 ```
 
-Eliminar el repositorio exclusivo de la práctica con todos sus manifiestos y cerrar la regla añadida.
+**Pide cero copias para parar la API y evitar que vuelva a arrancar.**
+
+```bash
+aws_demo ecs update-service --cluster "$S16_CLUSTER" --service "$S16_SERVICE" \
+  --desired-count 0 --query 'service.desiredCount'
+```
+
+**Espera a que termine de pararse.**
+
+```bash
+aws_demo ecs wait services-stable --cluster "$S16_CLUSTER" --services "$S16_SERVICE"
+```
+
+**Elimina el servicio que mantenía la aplicación funcionando y espera a su retirada.**
+
+```bash
+aws_demo ecs delete-service --cluster "$S16_CLUSTER" --service "$S16_SERVICE" --query 'service.status'
+aws_demo ecs wait services-inactive --cluster "$S16_CLUSTER" --services "$S16_SERVICE"
+```
+
+**Borra el repositorio de esta práctica con todas sus imágenes y manifiestos; la imagen local se conserva.**
 
 ```bash
 aws_demo ecr delete-repository --repository-name "$S16_REPOSITORY" --force
-aws_demo ec2 revoke-security-group-ingress --group-id "$S16_SECURITY_GROUP" \
-  --security-group-rule-ids "$S16_RULE_ID"
 ```
 
-Comprobar que no quedan tareas propias ni interfaces del grupo de la demo.
+**Busca la regla del puerto 8000 y elimínala si sigue existiendo.**
 
 ```bash
-aws_demo ecs list-tasks --cluster "$S16_CLUSTER" --service-name "$S16_SERVICE" --desired-status RUNNING
-aws_demo ec2 describe-network-interfaces --filters "Name=group-id,Values=$S16_SECURITY_GROUP" \
-  --query 'NetworkInterfaces[].NetworkInterfaceId'
+S16_RULE_ID="$(aws_demo ec2 describe-security-group-rules \
+  --filters "Name=group-id,Values=$S16_SECURITY_GROUP" \
+  --query 'SecurityGroupRules[?IsEgress==`false` && IpProtocol==`tcp` && FromPort==`8000` && ToPort==`8000`].SecurityGroupRuleId | [0]' \
+  --output text)"
+if [ -n "$S16_RULE_ID" ] && [ "$S16_RULE_ID" != "None" ]; then
+  aws_demo ec2 revoke-security-group-ingress --group-id "$S16_SECURITY_GROUP" \
+    --security-group-rule-ids "$S16_RULE_ID"
+fi
 ```
 
-El cluster, logs y secreto preparados se conservan para repetir la práctica; revisa su coste y retira los recursos propios si ya no los necesitas. No borres recursos compartidos. El esquema de `.demo-aws/` contiene referencias de tu proyecto, no la clave; mantenlo fuera de Git.
+Así no dependes de recordar el identificador de la regla ni falla si ya estaba retirada.
+
+## 8 · Comprobar la limpieza y repetir
+
+**Comprueba que no quedan tareas, servicios activos, entradas abiertas ni conexiones de la tarea.**
+
+```bash
+aws_demo ecs describe-clusters --clusters "$S16_CLUSTER" \
+  --query 'clusters[].{tareas:runningTasksCount,pendientes:pendingTasksCount,servicios:activeServicesCount}'
+aws_demo ec2 describe-security-groups --group-ids "$S16_SECURITY_GROUP" --query 'SecurityGroups[0].IpPermissions'
+aws_demo ec2 describe-network-interfaces --filters "Name=group-id,Values=$S16_SECURITY_GROUP" \
+  --query 'NetworkInterfaces[].{id:NetworkInterfaceId,estado:Status}'
+```
+
+Esperado: ceros y dos `[]`. Las conexiones de red pueden tardar un poco en desaparecer; vuelve a comprobarlas si aparecen. ECR debe mostrar que el repositorio ya no existe.
+
+Conservamos red, cluster, rol, secreto, logs y la configuración de tarea, como en el ensayo del profesor. No ejecutan la API; el secreto y los registros pueden seguir generando coste. Para repetir, vuelve al paso 0 y después al 2 si las imágenes y el código siguen iguales. Si no vas a repetir, usa [Limpieza completa](limpieza-completa.md).

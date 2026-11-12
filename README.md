@@ -1,12 +1,14 @@
 # S16 · Una API de IA en Docker y AWS
 
-Para el directo de José en el proyecto `thepower-aws` y región `eu-north-1`, usa el [guion preparado de clase](CLASE-AWS.md). Incluye la infraestructura de apoyo, los comandos del directo, costes y retirada; los ejemplos de cuenta y región de este README son genéricos.
+**Para repetir la demo de clase, sigue el [guion actualizado con todos los comandos](docs/guion-clase.md).** Si empiezas en tu propio proyecto AWS, completa primero [la preparación inicial por comandos](docs/preparar-aws.md): es lo que el profesor ya tenía preparado en el ensayo. Actualizado el 12/11/2026.
 
 Vamos a llevar una pequeña API de soporte desde nuestro ordenador a AWS. El objetivo es entender **imagen → registro → contenedor → respuesta**, sin tener que estudiar un proyecto grande. La práctica posterior es opcional.
 
 ## Guías de la clase
 
-- [Guion paso a paso con comandos](docs/guion-clase.md).
+- [0. Preparar AWS una vez: red, permisos, secreto, logs y cluster](docs/preparar-aws.md).
+- [1. Guion del directo: subir, arrancar, probar y limpiar](docs/guion-clase.md).
+- [2. Limpieza completa al terminar la práctica](docs/limpieza-completa.md).
 - [Prompt para ejecutar la demo con un agente](docs/prompt-agente.md).
 
 Las guías usan tu propio perfil, proyecto y recursos AWS. Prepara los requisitos indicados antes de ejecutar los bloques; el prompt requiere un agente con acceso a tu equipo y a AWS.
@@ -112,7 +114,7 @@ docker ps
 ### Paso 3: comprobar que funciona
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl --fail-with-body --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health
 ```
 
 La respuesta esperada es `{"estado":"ok","modo":"demo"}`. Después, prueba la clasificación con una incidencia ficticia:
@@ -141,6 +143,7 @@ Crea `.env` a partir del ejemplo **solo si todavía no existe**; si ya lo tienes
 chmod 600 .env
 # Edita .env con tu editor y guarda tu clave de OpenRouter.
 docker run --rm -d --name s16-demo --env-file .env -p 127.0.0.1:8000:8000 s16-clasificador:local
+curl --fail-with-body --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/health
 curl -X POST http://127.0.0.1:8000/clasificar -H 'Content-Type: application/json' -d '{"texto":"No puedo entrar en mi cuenta"}'
 docker logs s16-demo
 docker stop s16-demo
@@ -150,68 +153,18 @@ La respuesta debe indicar `modo: real` y `openai/gpt-6-luna`. Usamos `OPENROUTER
 
 Si cambias `.env`, detén y vuelve a crear el contenedor para que lea los nuevos valores. Si modificas `app.py` o las dependencias, construye de nuevo la imagen antes de arrancarlo. Un error 503 indica que falta la clave; un 502 puede indicar un problema con OpenRouter, el modelo o la validación de su respuesta. No publiques el contenido del archivo para pedir ayuda.
 
-## 3. Publicar la imagen en ECR
+## 3. Subir la API a AWS como en clase
 
-Necesitas un proyecto AWS de laboratorio autorizado, AWS CLI con sesión ya configurada, permisos, región y presupuesto. Crear recursos genera costes. Comprueba proyecto y región antes de empezar; no envíes datos personales. El ejemplo usa Estocolmo (`eu-north-1`) y un repositorio nuevo propio llamado `s16-clasificador`. Si tu proyecto usa otra región, configura la región que tengas asignada.
+El recorrido completo está en una única guía para evitar comandos distintos entre documentos:
 
-La tarea Fargate de este ejemplo utiliza X86_64. Construye una segunda imagen compatible para AWS, sin reemplazar la imagen nativa local:
+1. **[Preparar AWS una vez](docs/preparar-aws.md):** inicia sesión y crea tus recursos propios con comandos. Incluye lo que el profesor ya tenía preparado.
+2. **[Seguir el guion del directo](docs/guion-clase.md):** construye la imagen AMD64, crea ECR, autentica Docker, sube la imagen, registra la configuración, abre tu IP, arranca Fargate, obtiene su IP y prueba la clasificación real. Incluye los comandos de logs, retirada y comprobación.
+3. **[Retirar también la preparación](docs/limpieza-completa.md):** cuando no vayas a repetir, elimina tus recursos de apoyo y programa el borrado del secreto.
 
-```bash
-docker build --platform linux/amd64 -t s16-clasificador:1 .
-docker image inspect s16-clasificador:1 --format '{{.Os}}/{{.Architecture}}'
-```
+Usamos los mismos comandos y parámetros del ensayo, adaptados a los identificadores de cada alumno. El profesor utilizó archivos privados en `aws/`; aquí los auxiliares públicos están en `scripts/` y los JSON y datos de tu proyecto se generan en `.demo-aws/` (ignorada por Git). No necesitas `CLASE-AWS.md`, `aws/contexto.sh` ni ningún archivo fuera de este repo. No copies las direcciones o identificadores del proyecto del profesor.
 
-Debe mostrar `linux/amd64`. En un equipo ARM la construcción puede usar emulación y tardar más. Si eliges ARM64 en Fargate, construye para ARM64 y configura la tarea para esa arquitectura; ambas deben coincidir.
+El guion recupera de nuevo el identificador de la configuración antes de arrancar para evitar `TaskDefinition can not be blank`; calcula la IP nueva de cada tarea y busca la regla real al limpiar, aunque hayas perdido la variable.
 
-```bash
-aws sts get-caller-identity
-aws configure get region
-# Sustituye por TU cuenta y región tras comprobarlas arriba.
-AWS_ACCOUNT=123456789012
-AWS_REGION=eu-north-1
-REPO_URI="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/s16-clasificador"
-aws ecr create-repository --repository-name s16-clasificador --region "$AWS_REGION"
-aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
-docker tag s16-clasificador:1 "$REPO_URI:1"
-docker push "$REPO_URI:1"
-```
+La práctica es opcional. Usa mensajes ficticios, revisa los costes de AWS y OpenRouter y conserva pruebas de respuesta real y limpieza. El acceso HTTP limitado a tu IP es para esta prueba temporal; una API de producción necesita autenticación y TLS. Los errores reales nunca activan automáticamente el modo simulado.
 
-En **ECR → Repositories → s16-clasificador → Images**, comprueba la etiqueta y el digest. Guardar la imagen en ECR todavía no ejecuta la API. Si el repositorio ya existe, no repitas su creación: verifica primero que es tuyo y que estás en la cuenta correcta.
-
-## 4. Crear secreto y permisos
-
-En **Secrets Manager**, crea un secreto de tipo «Other type of secret», en texto plano, con el valor completo de la clave de OpenRouter. Ponle un nombre propio, por ejemplo `s16/tu-nombre/openrouter`. Nunca lo muestres en pantalla ni lo escribas en la definición de la imagen. Copia solo su **ARN**.
-
-Necesitas un **task execution role** para que ECS descargue la imagen, escriba logs y lea el secreto al arrancar. Además de `AmazonECSTaskExecutionRolePolicy`, añade a ese rol una política limitada a `secretsmanager:GetSecretValue` para el ARN del secreto. Si se usa una clave KMS propia, también hacen falta los permisos de descifrado y su política correspondiente. El **task role** es distinto: esta API no necesita llamar a APIs de AWS, por lo que no necesita permisos adicionales. Si no puedes crear o usar estos roles, pide al administrador del laboratorio un rol preparado; no concedas permisos generales para salir del paso.
-
-## 5. Lanzar la API con ECS y Fargate
-
-En la consola, mantén la misma cuenta y región:
-
-1. En **CloudWatch → Log groups**, crea un grupo propio, por ejemplo `/s16/tu-nombre`, y fija una retención corta.
-2. En **ECS → Clusters**, crea un cluster propio con infraestructura Fargate. Si ya tienes uno de laboratorio, verifica que puedes utilizarlo.
-3. En **Task definitions**, crea una definición Fargate para Linux **X86_64**, 0,25 vCPU y 0,5 GB de memoria. Selecciona el execution role anterior. Añade un contenedor con la URI de la imagen ECR y puerto TCP **8000**. Activa logs con el grupo creado, región y prefijo `api`.
-4. En las variables del contenedor, añade `API_MODE=real`, `OPENROUTER_MODEL=openai/gpt-6-luna` y `OPENROUTER_PROVIDER=openai/fast`. Añade `OPENROUTER_API_KEY` como **secreto de Secrets Manager**, indicando su ARN en el campo de referencia; no pegues el valor. La tarea recupera el secreto al arrancar.
-5. En el cluster crea un **servicio** Fargate con esa definición y una tarea deseada. Para esta prueba usa una VPC y subred pública con ruta a internet gateway, asignación de IP pública y un security group con entrada TCP 8000 **solo desde tu IP pública /32**. Permite la salida HTTPS 443 necesaria y asegúrate de que DNS y las rutas funcionen. No abras el puerto a todo Internet. Consulta tu IP por un medio conocido antes de crear la regla; una VPN puede cambiarla.
-6. Espera a que la tarea esté `RUNNING` y consulta su IP pública en **Tasks → Networking**. Una tarea puede tardar varios minutos; revisa Events y CloudWatch si no arranca.
-
-La IP y HTTP son para una **prueba temporal restringida**, con datos ficticios y sin claves de clientes. No es una configuración de producción ni proporciona autenticación o TLS para quienes llaman a la API. Si estás compartiendo pantalla, evita revelar secretos.
-
-## 6. Comprobar y retirar
-
-Desde la IP permitida, sustituye `IP_DE_LA_TAREA`:
-
-```bash
-curl http://IP_DE_LA_TAREA:8000/health
-curl -X POST http://IP_DE_LA_TAREA:8000/clasificar -H 'Content-Type: application/json' -d '{"texto":"No puedo entrar en mi cuenta"}'
-```
-
-Comprueba `modo: real`, el modelo y la respuesta. En CloudWatch abre el grupo y el stream de la tarea para revisar arranque y errores. Si `/health` funciona y falla `/clasificar`, revisa el modelo, acceso a OpenRouter, secreto y salida HTTPS. Un 502 significa que la llamada o la respuesta no se pudo validar; no revela la clave ni el error remoto.
-
-Al terminar, elimina **solo los recursos propios**: servicio y tareas, cluster si se creó para la prueba, definición de tarea cuando ya no se use, imágenes y repositorio ECR, grupo de logs y secreto. Revisa red, interfaces e IPs creadas; conserva VPC, roles y demás recursos compartidos. Secrets Manager puede programar el borrado para una fecha futura: comprueba su estado. Revisa costes en Billing. Parar tareas no borra imágenes, logs ni secretos; pueden seguir generando coste. Estima por separado 730 horas de Fargate, IPv4, ECR, logs, secreto, tráfico e inferencia; las alertas de presupuesto no paran recursos automáticamente.
-
-## Para la clase
-
-Enseñar primero el resultado local; después mostrar `app.py`, el Dockerfile y el trayecto ECR → ECS/Fargate. Preparar previamente permisos, red, presupuesto y secreto; ensayar publicación, llamada real y retirada en la cuenta autorizada. Si AWS o OpenRouter fallan, mostrar `demo` como simulación, sin presentarlo como una llamada real. Para la práctica, el alumno repite el recorrido y documenta imagen, respuesta, coste y limpieza.
-
-Documentación: [API Responses de OpenRouter](https://openrouter.ai/docs/api/reference/responses/overview), [niveles de servicio](https://openrouter.ai/docs/guides/features/service-tiers), [salidas estructuradas](https://openrouter.ai/docs/guides/features/structured-outputs).
+Documentación: [ECS/Fargate](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/AWS_Fargate.html), [rol de ejecución](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html), [API Responses de OpenRouter](https://openrouter.ai/docs/api/reference/responses/overview).

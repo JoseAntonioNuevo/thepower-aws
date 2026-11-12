@@ -11,11 +11,11 @@ Región: eu-north-1 (sustituye por la región asignada a tu proyecto si es otra)
 Ejecuta la demo completa de esta API: construcción Docker, publicación en ECR,
 despliegue ECS/Fargate, clasificación real y limpieza. Explica cada fase con una
 frase breve que pueda seguir un alumno. Lee las instrucciones del repositorio,
-README.md y docs/guion-clase.md antes de empezar. No asumas que existen archivos
+README.md, docs/preparar-aws.md y docs/guion-clase.md antes de empezar. No asumas que existen archivos
 privados del profesor ni recursos en mi proyecto.
 
 Verifica mi identidad, región y herramientas. Reutiliza los recursos de apoyo
-que yo haya preparado siguiendo el README: cluster Fargate, rol de ejecución,
+que yo haya preparado siguiendo docs/preparar-aws.md: cluster Fargate, rol de ejecución,
 secreto de OpenRouter, logs, VPC y subred pública. Si falta alguno, indícame qué
 falta antes de desplegar; no inventes identificadores ni uses los del profesor.
 Si el perfil o ID inicial no está rellenado, pídemelo antes de crear recursos.
